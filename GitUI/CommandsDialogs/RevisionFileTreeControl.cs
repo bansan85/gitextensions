@@ -12,6 +12,7 @@ using GitExtUtils;
 using GitExtUtils.GitUI;
 using GitUI.CommandsDialogs.BrowseDialog;
 using GitUI.Hotkey;
+using GitUI.NBugReports;
 using GitUI.Properties;
 using GitUIPluginInterfaces;
 using Microsoft;
@@ -718,7 +719,15 @@ See the changes in the commit form.");
             {
                 if (MessageBox.Show(_resetFileText.Text, _resetFileCaption.Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK)
                 {
-                    Module.CheckoutFiles(new[] { gitItem.FileName }, _revision.ObjectId, false);
+                    try
+                    {
+                        Module.CheckoutFiles(new[] { gitItem.FileName }, _revision.ObjectId, false);
+                    }
+                    catch (ExternalOperationException ex)
+                    {
+                        ThreadHelper.AssertOnUIThread();
+                        throw new UserExternalOperationException(context: null, ex);
+                    }
                 }
             }
         }

@@ -182,9 +182,8 @@ namespace GitCommands
         /// <param name="batchArguments">The array of batch arguments to pass to the executable.</param>
         /// <param name="input">Bytes to be written to each process's standard input stream, or <c>null</c> if no input is required.</param>
         /// <param name="createWindow">A flag indicating whether a console window should be created and bound to each process.</param>
-        /// <returns><c>true</c> if all process exit codes were zero, otherwise <c>false</c>.</returns>
-        [MustUseReturnValue("Callers should verify that " + nameof(RunBatchCommand) + " returned true")]
-        public static bool RunBatchCommand(
+        /// <exception>Throw an exception if one process exit code is not zero.</exception>
+        public static void RunBatchCommand(
             this IExecutable executable,
             ICollection<BatchArgumentItem> batchArguments,
             Action<BatchProgressEventArgs>? action = null,
@@ -200,9 +199,12 @@ namespace GitCommands
 
                 // Invoke batch progress callback
                 action?.Invoke(new BatchProgressEventArgs(item.BatchItemsCount, result));
-            }
 
-            return result;
+                if (!result)
+                {
+                    throw new ExternalOperationException(arguments: item.Argument);
+                }
+            }
         }
 
         /// <summary>

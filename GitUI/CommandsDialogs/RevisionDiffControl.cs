@@ -9,9 +9,11 @@ using System.Windows.Forms;
 using GitCommands;
 using GitCommands.Git;
 using GitCommands.Git.Commands;
+using GitExtUtils;
 using GitUI.CommandsDialogs.BrowseDialog;
 using GitUI.HelperDialogs;
 using GitUI.Hotkey;
+using GitUI.NBugReports;
 using GitUI.UserControls;
 using GitUI.UserControls.RevisionGrid;
 using GitUIPluginInterfaces;
@@ -401,38 +403,46 @@ namespace GitUI.CommandsDialogs
                 return;
             }
 
-            if (actsAsChild)
+            try
             {
-                // selected revisions
-                var deletedItems = selectedItems
-                    .Where(item => item.Item.IsDeleted)
-                    .Select(item => item.Item.Name).ToList();
-                Module.RemoveFiles(deletedItems, false);
-
-                foreach (var childId in selectedItems.SecondIds())
+                if (actsAsChild)
                 {
-                    var itemsToCheckout = selectedItems
-                        .Where(item => !item.Item.IsDeleted && item.SecondRevision.ObjectId == childId)
+                    // selected revisions
+                    var deletedItems = selectedItems
+                        .Where(item => item.Item.IsDeleted)
                         .Select(item => item.Item.Name).ToList();
-                    Module.CheckoutFiles(itemsToCheckout, childId, force: false);
+                    Module.RemoveFiles(deletedItems, false);
+
+                    foreach (var childId in selectedItems.SecondIds())
+                    {
+                        var itemsToCheckout = selectedItems
+                            .Where(item => !item.Item.IsDeleted && item.SecondRevision.ObjectId == childId)
+                            .Select(item => item.Item.Name).ToList();
+                        Module.CheckoutFiles(itemsToCheckout, childId, force: false);
+                    }
+                }
+                else
+                {
+                    // acts as parent
+                    // if file is new to the parent or is copied, it has to be removed
+                    var addedItems = selectedItems
+                        .Where(item => item.Item.IsNew || item.Item.IsCopied)
+                        .Select(item => item.Item.Name).ToList();
+                    Module.RemoveFiles(addedItems, false);
+
+                    foreach (var parentId in selectedItems.FirstIds())
+                    {
+                        var itemsToCheckout = selectedItems
+                            .Where(item => !item.Item.IsNew && item.FirstRevision?.ObjectId == parentId)
+                            .Select(item => item.Item.Name).ToList();
+                        Module.CheckoutFiles(itemsToCheckout, parentId, force: false);
+                    }
                 }
             }
-            else
+            catch (ExternalOperationException ex)
             {
-                // acts as parent
-                // if file is new to the parent or is copied, it has to be removed
-                var addedItems = selectedItems
-                    .Where(item => item.Item.IsNew || item.Item.IsCopied)
-                    .Select(item => item.Item.Name).ToList();
-                Module.RemoveFiles(addedItems, false);
-
-                foreach (var parentId in selectedItems.FirstIds())
-                {
-                    var itemsToCheckout = selectedItems
-                        .Where(item => !item.Item.IsNew && item.FirstRevision?.ObjectId == parentId)
-                        .Select(item => item.Item.Name).ToList();
-                    Module.CheckoutFiles(itemsToCheckout, parentId, force: false);
-                }
+                ThreadHelper.AssertOnUIThread();
+                throw new UserExternalOperationException(context: null, ex);
             }
 
             RequestRefresh();
