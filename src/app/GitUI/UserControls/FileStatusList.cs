@@ -927,7 +927,7 @@ public sealed partial class FileStatusList : GitModuleControl
 
     public void SetDiffs(GitRevision? firstRev, GitRevision secondRev, IReadOnlyList<GitItemStatus> items)
     {
-        FileStatusListLoading();
+        FileStatusListLoadingUnlessUpdatedIncrementally();
         UpdateToolbar([secondRev]);
         UpdateFileStatusListView(new List<FileStatusWithDescription>
         {
@@ -1154,7 +1154,7 @@ public sealed partial class FileStatusList : GitModuleControl
         }
 
         bool expandIfFewFiles = !_isFileTreeMode || _filter is not null || !string.IsNullOrEmpty(cboFindInCommitFilesGitGrep.Text);
-        (List<TreeNodeInfo> nodes, _showDiffGroups, bool filesPresent) = GetNodes(items, GroupByRevision, IsFilterMatch, _groupBy, _flatList, expandIfFewFiles, gitGrepState, _noItemStatuses, cancellationToken);
+        (List<TreeNodeInfo> nodes, _showDiffGroups, bool filesPresent) = GetNodes(items, GroupByRevision, IsFilterMatch, _groupBy, _flatList, expandIfFewFiles, gitGrepState, _noItemStatuses, UpdateIncrementally, cancellationToken);
 
         GitItemStatusesWithDescription = items;
         if (nodes.Count > 0)
@@ -1164,9 +1164,41 @@ public sealed partial class FileStatusList : GitModuleControl
 
         SetFileStatusListVisibility(showNoFiles: !filesPresent && items.Count <= 1 && !_isFileTreeMode);
 
+        BuildParameters buildParameters = GetBuildParameters(items.Count);
+        UpdateOutcome outcome = TryMergeNodes(nodes, buildParameters);
+        if (outcome == UpdateOutcome.Merged)
+        {
+            _loadingClearSkipped = false;
+            UpdateToolbar();
+            DataSourceChanged?.Invoke(this, EventArgs.Empty);
+
+            // The selected node is retained, but the data behind it may have changed (for example its content was reset):
+            // consumers which show the selected items have to refresh them like after a rebuild.
+            if (FileStatusListView.SelectedNodes.Count > 0)
+            {
+                FileStatusListView_SelectedIndexChanged();
+            }
+
+            return;
+        }
+
+        if (outcome is UpdateOutcome.RebuiltAfterMismatch or UpdateOutcome.RebuiltAfterFailure)
+        {
+            // The detached nodes were partly moved into the live tree, so they cannot be used anymore.
+            (nodes, _showDiffGroups, filesPresent) = GetNodes(items, GroupByRevision, IsFilterMatch, _groupBy, _flatList, expandIfFewFiles, gitGrepState, _noItemStatuses, UpdateIncrementally, cancellationToken);
+        }
+
+        _lastBuildParameters = buildParameters;
+
         try
         {
             FileStatusListView.BeginUpdate();
+
+            if (_loadingClearSkipped)
+            {
+                ClearSelected();
+                _loadingClearSkipped = false;
+            }
 
             FileStatusListView.Nodes.Clear();
 
@@ -1252,6 +1284,7 @@ public sealed partial class FileStatusList : GitModuleControl
         bool expandIfFewFiles,
         GitGrepState gitGrepState,
         IReadOnlyList<GitItemStatus> noItemStatuses,
+        bool tolerant,
         CancellationToken cancellationToken)
     {
         List<TreeNodeInfo> rootNodes = [];
@@ -1319,6 +1352,11 @@ public sealed partial class FileStatusList : GitModuleControl
 
             int shownCount = 0;
 
+            if (tolerant)
+            {
+                itemStatuses = RemoveInvalidEntries(itemStatuses);
+            }
+
             if (groupBy is null)
             {
                 diffGroup = _sorter.CreateTreeSortedByPath(itemStatuses, flatList, mergeSingleItemsWithFolder, CreateCountedNode);
@@ -1370,7 +1408,9 @@ public sealed partial class FileStatusList : GitModuleControl
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ++shownCount;
-                return CreateNode(item, fileStatusWithDescription);
+                return tolerant
+                    ? CreateNodeOrDegradedNode(item, fileStatusWithDescription)
+                    : CreateNode(item, fileStatusWithDescription);
             }
         }
 
@@ -1411,6 +1451,26 @@ public sealed partial class FileStatusList : GitModuleControl
             listItem.Tag = new FileStatusItem(fileStatusWithDescription.FirstRev, fileStatusWithDescription.SecondRev, item, fileStatusWithDescription.BaseA, fileStatusWithDescription.BaseB);
 
             return listItem;
+        }
+
+        TreeNode CreateNodeOrDegradedNode(GitItemStatus item, FileStatusWithDescription fileStatusWithDescription)
+        {
+            try
+            {
+                return CreateNode(item, fileStatusWithDescription);
+            }
+            catch (Exception ex) when (IsRecoverable(ex))
+            {
+                // One malformed entry must not prevent the other entries from being shown.
+                Trace.WriteLine($"Showing \"{item.Name}\" without its status because the item could not be created: {ex}");
+                int imageIndex = _imageListData.StateImageIndexMap[nameof(Images.FileStatusUnknown)];
+                return new TreeNode(item.Name)
+                {
+                    ImageIndex = imageIndex,
+                    SelectedImageIndex = imageIndex,
+                    Tag = new FileStatusItem(fileStatusWithDescription.FirstRev, fileStatusWithDescription.SecondRev, item, fileStatusWithDescription.BaseA, fileStatusWithDescription.BaseB)
+                };
+            }
         }
 
         static string GetGroupName(FileStatusWithDescription i, int shownCount)
@@ -2212,5 +2272,8 @@ public sealed partial class FileStatusList : GitModuleControl
         internal bool FilterWatermarkLabelVisible => _fileStatusList.cboFilterComboBox.IsWatermarkVisible;
         internal void StoreFilter(string value) => _fileStatusList.StoreFilter(value);
         internal void SetFileStatusListVisibility(bool showNoFiles) => _fileStatusList.SetFileStatusListVisibility(showNoFiles);
+        internal UpdateOutcome LastUpdateOutcome => _fileStatusList._lastUpdateOutcome;
+        internal void SetFlatList(bool flatList) => _fileStatusList._flatList = flatList;
+        internal Action<TreeNodeCollection>? AfterMergeHook { get => _fileStatusList._afterMergeHook; set => _fileStatusList._afterMergeHook = value; }
     }
 }

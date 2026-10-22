@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Runtime.InteropServices;
@@ -1615,6 +1616,34 @@ public sealed partial class FormCommit : GitModuleForm
         }
     }
 
+    /// <summary>
+    ///  Suspends the painting of the form and all its controls until disposed, so that the changes of the
+    ///  staged and unstaged lists show up at once and not one after the other.
+    /// </summary>
+    private IDisposable SuspendRedraw()
+    {
+        if (!IsHandleCreated)
+        {
+            return Disposable.Empty;
+        }
+
+        SetRedraw(enabled: false);
+        return Disposable.Create(() =>
+        {
+            if (!IsDisposed && IsHandleCreated)
+            {
+                SetRedraw(enabled: true);
+                Invalidate(invalidateChildren: true);
+            }
+        });
+
+        void SetRedraw(bool enabled)
+        {
+            System.Windows.Forms.Message message = System.Windows.Forms.Message.Create(Handle, NativeMethods.WM_SETREDRAW, enabled ? NativeMethods.TRUE : NativeMethods.FALSE, IntPtr.Zero);
+            DefWndProc(ref message);
+        }
+    }
+
     private void Unstage(bool canUseUnstageAll = true)
     {
         if (Module.IsBareRepository())
@@ -1640,6 +1669,7 @@ public sealed partial class FormCommit : GitModuleForm
         }
 
         using (WaitCursorScope.Enter())
+        using (SuspendRedraw())
         {
             EnableStageButtons(false);
             try
@@ -1883,6 +1913,7 @@ public sealed partial class FormCommit : GitModuleForm
     private void Stage(IReadOnlyList<GitItemStatus> items)
     {
         using (WaitCursorScope.Enter())
+        using (SuspendRedraw())
         {
             EnableStageButtons(false);
             try
