@@ -236,6 +236,7 @@ partial class FormCommit
         Unstaged.SelectFirstItemOnSetItems = false;
         Unstaged.Size = new Size(397, 249);
         Unstaged.TabIndex = 0;
+        Unstaged.UpdateIncrementally = true;
         Unstaged.SelectedIndexChanged += UnstagedSelectionChanged;
         Unstaged.DataSourceChanged += Staged_DataSourceChanged;
         Unstaged.DoubleClick += Unstaged_DoubleClick;
@@ -298,6 +299,7 @@ partial class FormCommit
         Staged.SelectFirstItemOnSetItems = false;
         Staged.Size = new Size(397, 314);
         Staged.TabIndex = 0;
+        Staged.UpdateIncrementally = true;
         Staged.SelectedIndexChanged += StagedSelectionChanged;
         Staged.DataSourceChanged += Staged_DataSourceChanged;
         Staged.DoubleClick += Staged_DoubleClick;
